@@ -30,7 +30,7 @@ get-dns-zone-nameservers:
 # This target depends on the create-rg target to ensure the RG exists before deploying
 # It does NOT depend on create-dns-zone because we assume the DNS zone is pre-existing
 deploy: create-rg
-	echo "🔎 Validating Azure ContainerApp deployment in resource group $(RESOURCE_GROUP_NAME)" && \
+	@echo "🔎 Validating Azure ContainerApp deployment in resource group $(RESOURCE_GROUP_NAME)" && \
 	az deployment group validate \
 			--resource-group $(RESOURCE_GROUP_NAME) \
 			--param dnsZoneName=$(DNS_ZONE_NAME) \

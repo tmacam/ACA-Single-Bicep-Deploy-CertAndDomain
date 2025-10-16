@@ -36,15 +36,13 @@ resource dnsZone 'Microsoft.Network/dnsZones@2023-07-01-preview' existing = {
 // This could be an existing one, but for simplicity we create it here
 // Note: CAE must be in a region that supports it and also supports managed certificates
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' = {
-  name: 'cae-${rgUniqueSuffix}'
+  name: 'cae-autoBindCustomDomain-${rgUniqueSuffix}'
   location: location
   properties: {
     workloadProfiles : [
       {
-        workloadProfileType: 'E4'
-        name: 'smallwp'
-        maximumCount: 1
-        minimumCount: 1
+        workloadProfileType: 'Consumption'
+        name: 'Consumption'
       }
     ]
   }
@@ -96,7 +94,7 @@ resource dnsRecordA 'Microsoft.Network/dnsZones/A@2023-07-01-preview' = {
 
 // `auto` bindingType is supported from 2024-10-02-preview onwards. This is still in preview, so please use with care.
 resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
-  name: 'app-${rgUniqueSuffix}'
+  name: 'app-${containerAppName}'
   location: location
   properties: {
     managedEnvironmentId: managedEnvironment.id
