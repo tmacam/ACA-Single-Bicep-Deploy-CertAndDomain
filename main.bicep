@@ -1,24 +1,40 @@
-@description('The location to deploy all my resources')
-param location string = resourceGroup().location
+@description('The DNS zone name to use for the Container App custom domain')
 param dnsZoneName string = 'apps.tmacam.dev'
 
-// param dnsZoneResourceGroupName string = 'aca.tmacam.dev-dns'
+@description('The name of the Container App to create')
+param containerAppName string = 'single-bicep-mcert-capp'
 
-var rgUniqueSuffix = uniqueString(resourceGroup().id)
+@description('The location to deploy all my resources')
+param location string = resourceGroup().location
 
-var containerAppName = 'single-bicep-mcert-capp'
+
+// We could and probably should retrieve this (or parts of this) from a property of existing resources
+// to make bicep track inter-resources dependencies for us. But honestly, this is simpler to understand.
 var fqdnAppDomainName = '${containerAppName}.${dnsZoneName}'
 
-// Here is the thing: this probably needs to be created before this whole deployment
-// because you need this zone properly configured if we trully want this to be done as a single
-// deployment.
-resource dnsZone 'Microsoft.Network/dnsZones@2023-07-01-preview' = {
+// not really required but nice to have unique names
+var rgUniqueSuffix = uniqueString(resourceGroup().id)
+
+
+//
+// DNS Zone - existing
+//
+// Here is the thing: to make this really a single-deploy setup this needs to be created in advance.
+// You need this zone properly configured (i.e., have its NS servers pointing to the right place)
+//  if we truly want this to be done as a single  deployment.
+resource dnsZone 'Microsoft.Network/dnsZones@2023-07-01-preview' existing = {
   name: dnsZoneName
-  location: 'global'
 }
+
+//
+// CAE and Container App
+//
 
 
 // Container Apps Environment
+//
+// This could be an existing one, but for simplicity we create it here
+// Note: CAE must be in a region that supports it and also supports managed certificates
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' = {
   name: 'cae-${rgUniqueSuffix}'
   location: location
@@ -34,7 +50,7 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-previe
   }
 }
 
-// The Custom Domain Verification ID is a subscription-level constant value. We are retriving it
+// The Custom Domain Verification ID is a subscription-level constant value. We are retrieving it
 // from the CAE because it is handily available here. You could retrieve it from a GET call to
 // az rest --method get --url "https://management.azure.com/subscriptions/%3CsubscriptionId%3E/providers/Microsoft.Resources?api-version=2021-04-01"
 var subscriptionCustomDomainVerificationId  = managedEnvironment.properties.customDomainConfiguration.customDomainVerificationId
@@ -91,7 +107,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
         allowInsecure: false
         customDomains: [{
           name: fqdnAppDomainName
-          bindingType: 'auto' // <<<<< Magic happens here!
+          bindingType: 'auto' // <<<<< ✨ Magic happens here!
         }]
       }
     }
@@ -132,9 +148,14 @@ resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificat
   ]
 }
 
+// ... and we are done!
+
+//
+// Outputs
+//
+
 
 output nameServers array = dnsZone.properties.nameServers
 output containerAppUrl string = containerApp.properties.configuration.ingress.fqdn
 output managedCertificateId string = managedCertificate.id
-
 output subscriptionCustomDomainVerificationId string = subscriptionCustomDomainVerificationId
