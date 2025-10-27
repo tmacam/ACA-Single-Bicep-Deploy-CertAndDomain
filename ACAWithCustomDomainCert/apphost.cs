@@ -11,15 +11,12 @@ using Azure.Provisioning.Primitives;
 using System.Net;
 
 
-var builder = DistributedApplication.CreateBuilder(args);
-
-string containerAppName = builder.AddParameter("containerAppName").ToString()
-    ?? throw new MissingParameterValueException("containerAppName parameter is required.");
-string dnsZoneName = builder.AddParameter("dnsZoneName").ToString()
-    ?? throw new MissingParameterValueException("dnsZoneName parameter is required.");
-
+var containerAppName = "containerAppName";
+var dnsZoneName = "apps.tmacam.dev";
 // the container app name doesn't NEED to match the leaf part of the FQDN but let's keep it simple, shall we?
 var customDomainFqdn = $"{containerAppName}.{dnsZoneName}";
+
+var builder = DistributedApplication.CreateBuilder(args);
 
 var cae = builder.AddAzureContainerAppEnvironment("aspireContainerEnv");
 
