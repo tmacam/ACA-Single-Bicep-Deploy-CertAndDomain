@@ -3,51 +3,34 @@
 
 #pragma warning disable ASPIRECOMPUTE001
 
-using System.ComponentModel;
-using System.Data.Common;
 using Aspire.Hosting.Azure;
-using Aspire.Hosting.Azure.AppContainers;
 using Azure.Provisioning;
 using Azure.Provisioning.AppContainers;
 using Azure.Provisioning.Expressions;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Identity.Client;
 using Azure.Provisioning.Primitives;
 using System.Net;
 
+
 var builder = DistributedApplication.CreateBuilder(args);
 
+string containerAppName = builder.AddParameter("containerAppName").ToString()
+    ?? throw new MissingParameterValueException("containerAppName parameter is required.");
+string dnsZoneName = builder.AddParameter("dnsZoneName").ToString()
+    ?? throw new MissingParameterValueException("dnsZoneName parameter is required.");
 
-//var containerAppName = builder.AddParameter("containerAppName");
-// var customDomainFqdn = builder.AddParameter("customDomainFqdn");
-var containerAppName = "mycontainerapp";
-var dnsZoneName = "apps.tmacam.dev";
 // the container app name doesn't NEED to match the leaf part of the FQDN but let's keep it simple, shall we?
 var customDomainFqdn = $"{containerAppName}.{dnsZoneName}";
 
-// We can use appsettings.json configuration for Azure provisioning or hardcode it here.
-//
-// builder.Services.Configure<AzureProvisioningOptions>(options =>
-// {
-//     options.SubscriptionId = "<sub-id>";
-//     options.ResourceGroup = "rg-aspire-demo"; // exact group
-//     options.Location = "eastus";
-//     options.AllowResourceGroupCreation = false;
-// });
-
 var cae = builder.AddAzureContainerAppEnvironment("aspireContainerEnv");
 
-
-// So this is not Bicep: it makes no sense describe something that only exists in the context
-// of provisioning infrastructure in the cloud. DNS being one of those things.
-
+// Setup DNS "infrastructure" to create the required DNS records for domain validation
+// TODO(tmacam): ensure CAE is created before these records are created
 var dnsRecordsForValidation = builder
     .AddAzureInfrastructure("custom-domain", infra =>
     {
         // We are going to create a few DNS records to prove we own the domain
         // and then create the custom domain binding in the Container App.
         // We need access to a DnsZone resource to host those records.
-
         var dnsZone = DnsZone.FromExisting("dnsZone");
         dnsZone.Name = dnsZoneName;
         infra.Add(dnsZone);
@@ -61,15 +44,6 @@ var dnsRecordsForValidation = builder
         var containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;
 
         // TXT 'asuid' record is required and checked during containerApp deployment (due to configuration.ingress.customDomains)
-
-        // A record pointing to the CAE environment - required by the certificate auto-binding logic during cert creation and binding
-
-        infra.Add(
-        new ProvisioningVariable("subscriptionCustomDomainVerificationId", typeof(string))
-        {
-            Value = subscriptionCustomDomainVerificationId
-        });
-
         var dnsAsuidTxtRecord = new TXT("dnsAsuidTxtRecord")
         {
             Name = $"asuid.{containerAppName}", // Remember: not arbitrary, must be 'asuid.<your-app-name>'
@@ -85,6 +59,7 @@ var dnsRecordsForValidation = builder
         };
         infra.Add(dnsAsuidTxtRecord);
 
+        // A record pointing to the CAE environment - required by the certificate auto-binding logic during cert creation and binding
         var dnsRecordA = new A("dnsRecordA")
         {
             Name = containerAppName, // Remember: not arbitrary, must be '<your-app-name>'
@@ -101,9 +76,6 @@ var dnsRecordsForValidation = builder
         };
         infra.Add(dnsRecordA);
     });
-    // how can we ensure we are waiting for the CAE to be available 
-    // .WaitFor(cae) 
-
 
 
 var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickstart:latest")
@@ -117,15 +89,19 @@ var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickst
     })
     .WaitFor(dnsRecordsForValidation);
 
-
-
-
-
 builder.Build().Run();
 
+// .. and we are done!
 
-#region  my extensions
-public static class CustomDnsContainerAppExtensions {
+//
+// The folowing code would eventually be replaced by a proper Azure.Provisioning SDK release
+// with DNS zone and record support
+//
+
+#region  bindingType:auto extension method
+public static class CustomDnsContainerAppExtensions
+{
+    // Ideally this method should be combined with ContainerAppExtensions::ConfigureCustomDomain so ir can handle all 3 cases
     public static void ConfigureAutoBindingCustomDomain(this ContainerApp app, /*IResourceBuilder<ParameterResource>*/ string customDomain)
     {
         ArgumentNullException.ThrowIfNull(app);
