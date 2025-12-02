@@ -1,17 +1,37 @@
-﻿#:sdk Aspire.AppHost.Sdk@13.0.0-preview.1.25522.5
-#:package Aspire.Hosting.Azure.AppContainers@13.0.0-preview.1.25522.5
+﻿// #:sdk Aspire.AppHost.Sdk@13.0.1
+// #:package Aspire.Hosting.Azure.AppContainers@13.1.0-preview.1.25578.2
+// #:package Azure.Provisioning.Dns@1.0.0-beta.1
 
 #pragma warning disable ASPIRECOMPUTE001
+#pragma warning disable AZPROVISION001
 
+using Aspire.Hosting;
 using Aspire.Hosting.Azure;
 using Azure.Provisioning;
 using Azure.Provisioning.AppContainers;
 using Azure.Provisioning.Expressions;
 using Azure.Provisioning.Primitives;
 using System.Net;
+using Azure.Provisioning.Dns;
+
+// TODOS:
+// * Instead of AddAzureInfrastructure, model the custom domain as its own resource that implements AzureBicepResource.
+// * Use Outputs and a ProvisioningOutputReference to resolve the CustomDomainVerificationid from the CAE resource instead of using an existing reference
+// * When you use BicepOutputReference it implicitly creates the "dependson" relationship when the resources get provisioned.
 
 
-var containerAppName = "containerAppName";
+// CustomDomain with auto binding Managed Certificate flow
+// Dependencies:
+//  - an existing DNS Zone in Azure DNS
+//  - an CAE (Azure Container App Environment)
+//
+// The process is a follows:
+//  1. Create the DNS records required for domain validation (TXT 'asuid' and A record pointing to CAE IP)
+//  2. Create the Container App with the custom domain configured with bindingType:auto
+//  3. Create the Managed Certificate and bind it to the custom domain.
+
+
+var containerAppName = "myapp";
 var dnsZoneName = "apps.tmacam.dev";
 // the container app name doesn't NEED to match the leaf part of the FQDN but let's keep it simple, shall we?
 var customDomainFqdn = $"{containerAppName}.{dnsZoneName}";
@@ -41,38 +61,36 @@ var dnsRecordsForValidation = builder
         var containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;
 
         // TXT 'asuid' record is required and checked during containerApp deployment (due to configuration.ingress.customDomains)
-        var dnsAsuidTxtRecord = new TXT("dnsAsuidTxtRecord")
+        var dnsAsuidTxtRecord = new DnsTxtRecord("dnsAsuidTxtRecord")
         {
             Name = $"asuid.{containerAppName}", // Remember: not arbitrary, must be 'asuid.<your-app-name>'
-            Ttl = 3600,
+            TtlInSeconds = 3600,
             Parent = dnsZone,
-            TXTRecords =
-            {
-                new TxtRecord()
+            TxtRecords = {
+                new DnsTxtRecordInfo()
                 {
-                    Value = { subscriptionCustomDomainVerificationId }
+                    Values = [ subscriptionCustomDomainVerificationId ]
                 }
             }
         };
         infra.Add(dnsAsuidTxtRecord);
 
         // A record pointing to the CAE environment - required by the certificate auto-binding logic during cert creation and binding
-        var dnsRecordA = new A("dnsRecordA")
+        DnsARecord dnsRecordA = new(nameof(dnsRecordA))
         {
             Name = containerAppName, // Remember: not arbitrary, must be '<your-app-name>'
-            Ttl = 3600,
+            TtlInSeconds = 3600,
             Parent = dnsZone,
             ARecords =
             {
-                new ARecord()
+                new DnsARecordInfo()
                 {
                     Ipv4Address = containerAppEnvironmentStaticIP
                 }
-            }
-            //TargetResource = infra.GetResource<AzureContainerAppEnvironment>("cae")
+            },
         };
         infra.Add(dnsRecordA);
-    });
+});
 
 
 var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickstart:latest")
@@ -85,6 +103,43 @@ var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickst
         app.ConfigureAutoBindingCustomDomain(customDomainFqdn);
     })
     .WaitFor(dnsRecordsForValidation);
+
+
+// Finally, we need to create the Managed Certificate and bind it to the custom domain
+
+// resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-10-02-preview' = {
+//   name: 'cert-${fqdnAppDomainName}-${rgUniqueSuffix}'
+//   parent: managedEnvironment
+//   location: location
+//   properties: {
+//     subjectName: fqdnAppDomainName
+//     domainControlValidation: 'HTTP'
+//   }
+//   dependsOn: [
+//     containerApp, dnsRecordA, dnsAsuidTxtRecord
+//   ]
+// }
+
+
+var managedCertificateInfra = builder
+    .AddAzureInfrastructure("managed-certificate-infra", infra => {
+        var containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infra);
+
+        ContainerAppManagedCertificate managedCert = new(nameof(managedCert))
+        {
+            Parent = containerAppEnvironment,
+            Name = $"cert-{customDomainFqdn}",
+            Properties = new() {
+                SubjectName = customDomainFqdn,
+                DomainControlValidation = new StringLiteralExpression("HTTP"),
+            }  
+        };
+        infra.Add(managedCert);
+    });
+
+
+
+// Enact the deployment
 
 builder.Build().Run();
 
@@ -139,220 +194,6 @@ public static class CustomDnsContainerAppExtensions
         app.Configuration.Ingress.CustomDomains.Add(containerAppCustomDomain);
 
         app.ResourceVersion = "2025-07-01"; // BindingType:auto is only available for now in preview API versions from 2024-10 onwwards
-    }
-}
-#endregion
-
-#region DnsZone
-
-
-// from https://github.com/eerhardt/CustomDomainTest/blob/main/CustomDomainTest.AppHost/DnsZones.cs
-
-public partial class DnsZone : ProvisionableResource
-{
-    /// <summary>
-    /// The name of the virtual network.
-    /// </summary>
-    public BicepValue<string> Name
-    {
-        get { Initialize(); return _name!; }
-        set { Initialize(); _name!.Assign(value); }
-    }
-    private BicepValue<string>? _name;
-
-    public DnsZone(string bicepIdentifier, string? resourceVersion = default)
-        : base(bicepIdentifier, "Microsoft.Network/dnsZones", resourceVersion ?? "2023-07-01-preview")
-    {
-    }
-
-    protected override void DefineProvisionableProperties()
-    {
-        base.DefineProvisionableProperties();
-        _name = DefineProperty<string>("Name", ["name"], isRequired: true);
-    }
-
-    public static DnsZone FromExisting(string bicepIdentifier, string? resourceVersion = default) =>
-        new(bicepIdentifier, resourceVersion) { IsExistingResource = true };
-
-    public override ResourceNameRequirements GetResourceNameRequirements() =>
-        new(minLength: 2, maxLength: 64, validCharacters: ResourceNameCharacters.LowercaseLetters | ResourceNameCharacters.UppercaseLetters | ResourceNameCharacters.Numbers | ResourceNameCharacters.Hyphen | ResourceNameCharacters.Underscore | ResourceNameCharacters.Period);
-}
-
-// TXT and A record types should subclass from the same base class and only 
-// differ in the constructor by the core azure resource type on the constructor
-
-public partial class TXT : ProvisionableResource
-{
-    public BicepValue<string> Name
-    {
-        get { Initialize(); return _name!; }
-        set { Initialize(); _name!.Assign(value); }
-    }
-    private BicepValue<string>? _name;
-
-    public BicepValue<int> Ttl
-    {
-        get { Initialize(); return _ttl!; }
-        set { Initialize(); _ttl!.Assign(value); }
-    }
-    private BicepValue<int>? _ttl;
-
-    public DnsZone? Parent
-    {
-        get { Initialize(); return _parent!.Value; }
-        set { Initialize(); _parent!.Value = value; }
-    }
-    private ResourceReference<DnsZone>? _parent;
-
-    // not filtering for IpAddress.AddressFamily = AddressFamily.InterNetwork
-    public BicepList<IPAddress> ARecords
-    {
-        get { Initialize(); return _aRecords!; }
-        set { Initialize(); _aRecords!.Assign(value); }
-    }
-    private BicepList<IPAddress>? _aRecords;
-
-    public BicepList<TxtRecord> TXTRecords
-    {
-        get { Initialize(); return _txtRecords!; }
-        set { Initialize(); _txtRecords!.Assign(value); }
-    }
-    private BicepList<TxtRecord>? _txtRecords;
-
-    public TXT(string bicepIdentifier, string? resourceVersion = default)
-        : base(bicepIdentifier, "Microsoft.Network/dnsZones/TXT", resourceVersion ?? "2023-07-01-preview")
-    {
-    }
-
-    protected override void DefineProvisionableProperties()
-    {
-        base.DefineProvisionableProperties();
-        _name = DefineProperty<string>("Name", ["name"], isRequired: true);
-        _ttl = DefineProperty<int>("TTL", ["properties", "TTL"]);
-        _parent = DefineResource<DnsZone>("Parent", ["parent"], isRequired: true);
-        _aRecords = DefineListProperty<IPAddress>("ARecords", ["properties", "ARecords"]);
-        _txtRecords = DefineListProperty<TxtRecord>("TXTRecords", ["properties", "TXTRecords"]);
-    }
-
-    public static TXT FromExisting(string bicepIdentifier, string? resourceVersion = default) =>
-        new(bicepIdentifier, resourceVersion) { IsExistingResource = true };
-
-    public override ResourceNameRequirements GetResourceNameRequirements() =>
-        new(minLength: 2, maxLength: 64, validCharacters: ResourceNameCharacters.LowercaseLetters | ResourceNameCharacters.UppercaseLetters | ResourceNameCharacters.Numbers | ResourceNameCharacters.Hyphen | ResourceNameCharacters.Underscore | ResourceNameCharacters.Period);
-}
-
-public partial class A : ProvisionableResource
-{
-    /// <summary>
-    /// The name of the virtual network.
-    /// </summary>
-    public BicepValue<string> Name
-    {
-        get { Initialize(); return _name!; }
-        set { Initialize(); _name!.Assign(value); }
-    }
-    private BicepValue<string>? _name;
-
-    public BicepValue<int> Ttl
-    {
-        get { Initialize(); return _ttl!; }
-        set { Initialize(); _ttl!.Assign(value); }
-    }
-    private BicepValue<int>? _ttl;
-
-    public DnsZone? Parent
-    {
-        get { Initialize(); return _parent!.Value; }
-        set { Initialize(); _parent!.Value = value; }
-    }
-    private ResourceReference<DnsZone>? _parent;
-
-    // not filtering for IpAddress.AddressFamily = AddressFamily.InterNetwork
-    public BicepList<ARecord> ARecords
-    {
-        get { Initialize(); return _aRecords!; }
-        set { Initialize(); _aRecords!.Assign(value); }
-    }
-    private BicepList<ARecord>? _aRecords;
-
-    public BicepList<TxtRecord> TXTRecords
-    {
-        get { Initialize(); return _txtRecords!; }
-        set { Initialize(); _txtRecords!.Assign(value); }
-    }
-    private BicepList<TxtRecord>? _txtRecords;
-
-    public A(string bicepIdentifier, string? resourceVersion = default)
-        : base(bicepIdentifier, "Microsoft.Network/dnsZones/A", resourceVersion ?? "2023-07-01-preview")
-    {
-    }
-
-    protected override void DefineProvisionableProperties()
-    {
-        base.DefineProvisionableProperties();
-        _name = DefineProperty<string>("Name", ["name"], isRequired: true);
-        _ttl = DefineProperty<int>("TTL", ["properties", "TTL"]);
-        _parent = DefineResource<DnsZone>("Parent", ["parent"], isRequired: true);
-        _aRecords = DefineListProperty<ARecord>("ARecords", ["properties", "ARecords"]);
-        _txtRecords = DefineListProperty<TxtRecord>("TXTRecords", ["properties", "TXTRecords"]);
-    }
-
-    public static A FromExisting(string bicepIdentifier, string? resourceVersion = default) =>
-        new(bicepIdentifier, resourceVersion) { IsExistingResource = true };
-
-    public override ResourceNameRequirements GetResourceNameRequirements() =>
-        new(minLength: 2, maxLength: 64, validCharacters: ResourceNameCharacters.LowercaseLetters | ResourceNameCharacters.UppercaseLetters | ResourceNameCharacters.Numbers | ResourceNameCharacters.Hyphen | ResourceNameCharacters.Underscore | ResourceNameCharacters.Period);
-}
-// https://learn.microsoft.com/en-us/azure/templates/microsoft.network/dnszones/a?pivots=deployment-language-bicep#arecord
-public partial class ARecord : ProvisionableConstruct
-{
-    /// <summary>
-    /// IPv4 address in the A record.
-    /// </summary>
-    public BicepValue<IPAddress> Ipv4Address
-    {
-        get { Initialize(); return _ipv4Address!; }
-        set { Initialize(); _ipv4Address!.Assign(value); }
-    }
-    private BicepValue<IPAddress>? _ipv4Address;
-
-    public ARecord()
-    {
-    }
-
-    /// <summary>
-    /// Define all the provisionable properties of ContainerAppCustomDomain.
-    /// </summary>
-    protected override void DefineProvisionableProperties()
-    {
-        base.DefineProvisionableProperties();
-        _ipv4Address = DefineProperty<IPAddress>("Ipv4Address", ["ipv4Address"]);
-    }
-}
-
-public partial class TxtRecord : ProvisionableConstruct
-{
-    /// <summary>
-    /// Value of the TXT record. (Yes, the name is singular but it holds an array of strings. Awkward...)
-    /// </summary>
-    public BicepList<string> Value
-    {
-        get { Initialize(); return _value!; }
-        set { Initialize(); _value!.Assign(value); }
-    }
-    private BicepList<string>? _value;
-
-    public TxtRecord()
-    {
-    }
-
-    /// <summary>
-    /// Define all the provisionable properties of ContainerAppCustomDomain.
-    /// </summary>
-    protected override void DefineProvisionableProperties()
-    {
-        base.DefineProvisionableProperties();
-        _value = DefineListProperty<string>("Value", ["value"]);
     }
 }
 #endregion

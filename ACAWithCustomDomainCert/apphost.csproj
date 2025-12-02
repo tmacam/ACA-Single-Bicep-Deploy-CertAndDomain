@@ -1,0 +1,22 @@
+﻿<Project Sdk="Aspire.AppHost.Sdk/13.1.0-preview.1.25578.2">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackAsTool>true</PackAsTool>
+    <UserSecretsId>apphost-09727fb73645e8a66d50a576b7b38475aab3489468baf4fb39d9844271bdfd26</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- <PackageReference Include="Aspire.Hosting.AppHost" Version="13.1.0-preview.1.25578.2" /> -->
+    <PackageReference Include="Aspire.Hosting.Azure.AppContainers" Version="13.1.0-preview.1.25578.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../azure-sdk-for-net/sdk/provisioning/Azure.Provisioning.Dns//src/Azure.Provisioning.Dns.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>
