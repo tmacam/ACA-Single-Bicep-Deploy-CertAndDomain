@@ -5,14 +5,12 @@
 #pragma warning disable ASPIRECOMPUTE001
 #pragma warning disable AZPROVISION001
 
-using Aspire.Hosting;
+using ACAWithCustomDomainCert;
 using Aspire.Hosting.Azure;
+using Aspire.Hosting.Azure.AppContainers;
 using Azure.Provisioning;
 using Azure.Provisioning.AppContainers;
 using Azure.Provisioning.Expressions;
-using Azure.Provisioning.Primitives;
-using System.Net;
-using Azure.Provisioning.Dns;
 
 // TODOS:
 // * Instead of AddAzureInfrastructure, model the custom domain as its own resource that implements AzureBicepResource.
@@ -42,56 +40,11 @@ var cae = builder.AddAzureContainerAppEnvironment("aspireContainerEnv");
 
 // Setup DNS "infrastructure" to create the required DNS records for domain validation
 // TODO(tmacam): ensure CAE is created before these records are created
-var dnsRecordsForValidation = builder
-    .AddAzureInfrastructure("custom-domain", infra =>
-    {
-        // We are going to create a few DNS records to prove we own the domain
-        // and then create the custom domain binding in the Container App.
-        // We need access to a DnsZone resource to host those records.
-        var dnsZone = DnsZone.FromExisting("dnsZone");
-        dnsZone.Name = dnsZoneName;
-        infra.Add(dnsZone);
-
-        // CAE verificationId and IP Address
-        //
-        // We are definining something akin to a Bicep module so, in this "scope", the CAE is an existing
-        // resource we can refeer to.
-        var containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infra);
-        var subscriptionCustomDomainVerificationId = containerAppEnvironment.CustomDomainConfiguration.CustomDomainVerificationId;
-        var containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;
-
-        // TXT 'asuid' record is required and checked during containerApp deployment (due to configuration.ingress.customDomains)
-        var dnsAsuidTxtRecord = new DnsTxtRecord("dnsAsuidTxtRecord")
-        {
-            Name = $"asuid.{containerAppName}", // Remember: not arbitrary, must be 'asuid.<your-app-name>'
-            TtlInSeconds = 3600,
-            Parent = dnsZone,
-            TxtRecords = {
-                new DnsTxtRecordInfo()
-                {
-                    Values = [ subscriptionCustomDomainVerificationId ]
-                }
-            }
-        };
-        infra.Add(dnsAsuidTxtRecord);
-
-        // A record pointing to the CAE environment - required by the certificate auto-binding logic during cert creation and binding
-        DnsARecord dnsRecordA = new(nameof(dnsRecordA))
-        {
-            Name = containerAppName, // Remember: not arbitrary, must be '<your-app-name>'
-            TtlInSeconds = 3600,
-            Parent = dnsZone,
-            ARecords =
-            {
-                new DnsARecordInfo()
-                {
-                    Ipv4Address = containerAppEnvironmentStaticIP
-                }
-            },
-        };
-        infra.Add(dnsRecordA);
-});
-
+var dnsVerificationRecods = builder.AddAzureDnsOwnershipVerificationResource(
+    name: "dnsOwnershipVerification",
+    hostname: containerAppName,
+    dnsDomain: dnsZoneName,
+    cae: cae);
 
 var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickstart:latest")
     .WithComputeEnvironment(cae)
@@ -100,47 +53,11 @@ var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickst
     .WithExternalHttpEndpoints()
     .PublishAsAzureContainerApp((infra, app) =>
     {
-        app.ConfigureAutoBindingCustomDomain(customDomainFqdn);
+        app.ConfigureAutoBindingCustomDomain(cae, infra, customDomainFqdn);
     })
-    .WaitFor(dnsRecordsForValidation);
-
-
-// Finally, we need to create the Managed Certificate and bind it to the custom domain
-
-// resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-10-02-preview' = {
-//   name: 'cert-${fqdnAppDomainName}-${rgUniqueSuffix}'
-//   parent: managedEnvironment
-//   location: location
-//   properties: {
-//     subjectName: fqdnAppDomainName
-//     domainControlValidation: 'HTTP'
-//   }
-//   dependsOn: [
-//     containerApp, dnsRecordA, dnsAsuidTxtRecord
-//   ]
-// }
-
-
-var managedCertificateInfra = builder
-    .AddAzureInfrastructure("managed-certificate-infra", infra => {
-        var containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infra);
-
-        ContainerAppManagedCertificate managedCert = new(nameof(managedCert))
-        {
-            Parent = containerAppEnvironment,
-            Name = $"cert-{customDomainFqdn}",
-            Properties = new() {
-                SubjectName = customDomainFqdn,
-                DomainControlValidation = new StringLiteralExpression("HTTP"),
-            }  
-        };
-        infra.Add(managedCert);
-    });
-
-
+    .WaitFor(dnsVerificationRecods);
 
 // Enact the deployment
-
 builder.Build().Run();
 
 // .. and we are done!
@@ -151,13 +68,20 @@ builder.Build().Run();
 //
 
 #region  bindingType:auto extension method
-public static class CustomDnsContainerAppExtensions
+public static class AutoBindingCustomDomainExtensions
 {
     // Ideally this method should be combined with ContainerAppExtensions::ConfigureCustomDomain so ir can handle all 3 cases
-    public static void ConfigureAutoBindingCustomDomain(this ContainerApp app, /*IResourceBuilder<ParameterResource>*/ string customDomain)
+    public static void ConfigureAutoBindingCustomDomain(
+        this ContainerApp app,
+        IResourceBuilder<AzureContainerAppEnvironmentResource> cae,
+        AzureResourceInfrastructure infrastructure,
+         /*IResourceBuilder<ParameterResource>*/ string customDomainFqdn)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(customDomain);
+        ArgumentNullException.ThrowIfNull(cae);
+        ArgumentException.ThrowIfNullOrWhiteSpace(customDomainFqdn);
+
+        // 1. Configure the custom domain on the Container App with bindingType:auto
 
         if (app.ParentInfrastructure is not AzureResourceInfrastructure module)
         {
@@ -167,11 +91,13 @@ public static class CustomDnsContainerAppExtensions
         var containerAppCustomDomain = new ContainerAppCustomDomain()
         {
             BindingType = new StringLiteralExpression("Auto"),
-            Name = new StringLiteralExpression(customDomain), //customDomain.AsProvisioningParameter(module),
+            Name = new StringLiteralExpression(customDomainFqdn), //customDomain.AsProvisioningParameter(module),
         };
 
-        var existingCustomDomain = app.Configuration.Ingress.CustomDomains
-            .FirstOrDefault(cd =>
+        // Remove any existing custom domain with the same name to avoid duplicates
+        var candidateDomainNameBicepValue = containerAppCustomDomain.Name as IBicepValue;
+        app.Configuration.Ingress.CustomDomains
+            .Where(cd =>
             {
                 // This is a cautionary tale to anyone who reads this code as to the dangers
                 // of using implicit conversions in C#. BicepValue<T> uses some implicit conversions
@@ -182,18 +108,34 @@ public static class CustomDnsContainerAppExtensions
                 // edge case of where someone might call ConfigureCustomDomain multiple times on the
                 // same domain - unlikely but possible if someone has built some libraries.                
                 var itemDomainNameBicepValue = cd.Value?.Name as IBicepValue;
-                var candidateDomainNameBicepValue = containerAppCustomDomain.Name as IBicepValue;
                 return itemDomainNameBicepValue?.Source?.Construct == candidateDomainNameBicepValue.Source?.Construct;
-            });
-
-        if (existingCustomDomain is not null)
-        {
-            app.Configuration.Ingress.CustomDomains.Remove(existingCustomDomain);
-        }
-
+            })
+            .ToList() // Materialize to avoid modifying collection during enumeration
+            .ForEach(i => app.Configuration.Ingress.CustomDomains.Remove(i));
+        // We are safe now. Add the new custom domain.
         app.Configuration.Ingress.CustomDomains.Add(containerAppCustomDomain);
 
         app.ResourceVersion = "2025-07-01"; // BindingType:auto is only available for now in preview API versions from 2024-10 onwwards
+        // TODO(tiagoa): PR to Azure.Provisioning to add 2025-07-01 as a known API version for ContainerApp
+
+        // Finally, we need to create the Managed Certificate and bind it to the custom domain
+        // Interestingly, this Managed Certificate is a child of the Container App Environment,
+        // it is not a child of the Container App itself, even though the binding is done on the
+        // Container App.
+
+        ContainerAppManagedEnvironment containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infrastructure);
+        ContainerAppManagedCertificate autoBindManagedCertificate = new(nameof(autoBindManagedCertificate))
+        {
+            Parent = containerAppEnvironment,
+            Name = customDomainFqdn,
+            Properties = new()
+            {
+                SubjectName = customDomainFqdn,
+                DomainControlValidation = new StringLiteralExpression("HTTP"),
+            }
+        };
+        infrastructure.Add(autoBindManagedCertificate);
+        // dependsOn: [ containerApp, dnsRecordA, dnsAsuidTxtRecord ]
     }
 }
 #endregion
