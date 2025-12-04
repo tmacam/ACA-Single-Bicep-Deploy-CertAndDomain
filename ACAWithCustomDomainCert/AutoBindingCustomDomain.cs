@@ -20,7 +20,7 @@ public class AzureDnsOwnershipVerificationResource(
 {
     public string Hostname { get; } = hostname;
     public string DnsDomain { get; } = dnsDomain;
-    public string Fqdn => $"{Hostname}.{DnsDomain}"; // Unused?
+    public string Fqdn => $"{Hostname}.{DnsDomain}"; // TODO(tmacam) Unused? Remove it?
 }
 
 public static class AzureDnsOwnershipVerificationResourceExtension
