@@ -3,6 +3,7 @@
 
 using Aspire.Hosting.Azure;
 using Aspire.Hosting.Azure.AppContainers;
+using Azure.Provisioning;
 using Azure.Provisioning.AppContainers;
 using Azure.Provisioning.Dns;
 
@@ -17,9 +18,9 @@ public class AzureDnsOwnershipVerificationResource(
     Action<AzureResourceInfrastructure> configureInfrastructure)
     : AzureProvisioningResource(name, configureInfrastructure)
 {
-
     public string Hostname { get; } = hostname;
     public string DnsDomain { get; } = dnsDomain;
+    public string Fqdn => $"{Hostname}.{DnsDomain}"; // Unused?
 }
 
 public static class AzureDnsOwnershipVerificationResourceExtension
@@ -93,6 +94,11 @@ public static class AzureDnsOwnershipVerificationResourceExtension
                 },
             };
             infrastructure.Add(dnsRecordA);
+
+            // Add outputs 
+            infrastructure.Add(new ProvisioningOutput("dnsZoneName",  typeof(string)) { Value = dnsZone.Name });
+            infrastructure.Add(new ProvisioningOutput("hostname", typeof(string)) { Value = dnsRecordA.Name });
+            infrastructure.Add(new ProvisioningOutput("fqdn", typeof(string)) { Value = $"{hostname}.{dnsDomain}" });
         }
 
         return builder.AddResource(new AzureDnsOwnershipVerificationResource(
