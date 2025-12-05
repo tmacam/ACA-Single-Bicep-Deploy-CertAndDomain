@@ -44,7 +44,6 @@ public static class AutoBindingCustomDomainExtensions
 
         // Step 1:
         // DNS Ownership Verification Resources
-        // var dnsOwnershipVerificationResources = new Infrastructure("dnsOwnershipVerificationInfra"); // Separate infra to hold the DNS verification resources
         AzureDnsOwnershipVerificationResourceExtension.GetVerificationIdAndStaticIP(
             cae,
             containerAppInfrastructure,
@@ -60,7 +59,6 @@ public static class AutoBindingCustomDomainExtensions
         // But also make sure that they are deployed _before_ the Container App itself
         app.DependsOn.Add(dnsAsuidTxtRecord); // CustomDomain+auto binding requires the TXT record to be present
         app.DependsOn.Add(dnsRecordA); // Just to be on the safe side, only the managed certs requires this A record to be present
-        // containerAppInfrastructure.Add(dnsOwnershipVerificationResources);
 
         // Step 2:
         // Configure the custom domain on the Container App with bindingType:auto
