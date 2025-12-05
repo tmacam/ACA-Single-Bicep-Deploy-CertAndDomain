@@ -21,7 +21,6 @@ public class AzureDnsOwnershipVerificationResource(
 {
     public string Hostname { get; } = hostname;
     public string DnsDomain { get; } = dnsDomain;
-    public string Fqdn => $"{Hostname}.{DnsDomain}"; // TODO(tmacam) Unused? Remove it?
 }
 
 public static class AzureDnsOwnershipVerificationResourceExtension
@@ -40,7 +39,6 @@ public static class AzureDnsOwnershipVerificationResourceExtension
 
         builder.AddAzureProvisioning();
 
-
         return builder.AddResource(new AzureDnsOwnershipVerificationResource(
             name,
             hostname,
@@ -48,7 +46,12 @@ public static class AzureDnsOwnershipVerificationResourceExtension
             infra =>
             {
                 GetVerificationIdAndStaticIP(cae, infra, out var subscriptionCustomDomainVerificationId, out var containerAppEnvironmentStaticIP);
-                ConfigureInfrastructure(hostname, dnsDomain, subscriptionCustomDomainVerificationId, containerAppEnvironmentStaticIP, infra);
+                ConfigureInfrastructure(
+                    hostname: hostname,
+                    dnsDomain: dnsDomain,
+                    subscriptionCustomDomainVerificationId,
+                    containerAppEnvironmentStaticIP,
+                    infrastructure: infra);
             }
         ));
     }
@@ -75,7 +78,6 @@ public static class AzureDnsOwnershipVerificationResourceExtension
         DnsZone dnsZone = DnsZone.FromExisting(nameof(dnsZone));
         dnsZone.Name = dnsDomain;
         infrastructure.Add(dnsZone);
-
 
         // TXT 'asuid' record is required and checked during containerApp deployment (due to configuration.ingress.customDomains)
         DnsTxtRecord dnsAsuidTxtRecord = new(nameof(dnsAsuidTxtRecord))
@@ -124,8 +126,9 @@ public static class AzureDnsOwnershipVerificationResourceExtension
     {
         // CAE verificationId and IP Address
         //
-        // We are definining something akin to a Bicep module so, in this "scope", the CAE is an existing
-        // resource we can refeer to.
+        // Think of AzureResourceInfrastructure as a Bicep module. We are defining
+        // a reference to an existing Container App Environment resource in this "scope"
+        // so we have a resource we can refer to.
         ContainerAppManagedEnvironment containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infrastructure);
         subscriptionCustomDomainVerificationId = containerAppEnvironment.CustomDomainConfiguration.CustomDomainVerificationId;
         containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;

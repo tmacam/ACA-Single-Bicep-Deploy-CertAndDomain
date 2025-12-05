@@ -2,9 +2,6 @@
 // #:package Aspire.Hosting.Azure.AppContainers@13.1.0-preview.1.25578.2
 // #:package Azure.Provisioning.Dns@1.0.0-beta.1
 
-#pragma warning disable ASPIRECOMPUTE001
-#pragma warning disable AZPROVISION001
-
 using Aspire.Hosting.Azure;
 using Aspire.Hosting.Azure.AppContainers;
 using Azure.Provisioning;
@@ -13,9 +10,9 @@ using Azure.Provisioning.Expressions;
 
 namespace ACAWithCustomDomainCert;
 
-#region  bindingType:auto extension method
 public static class AutoBindingCustomDomainExtensions
 {
+    // Configures a ContainerApp to use a custom domain with auto binding managed certificate - along with the required resources for that.
     public static void ConfigureAutoBindingCustomDomain(
         this ContainerApp app,
         IResourceBuilder<AzureContainerAppEnvironmentResource> cae,
@@ -45,8 +42,6 @@ public static class AutoBindingCustomDomainExtensions
         //  2. Create/Configure the Container App with the custom domain configured with bindingType:auto
         //  3. Create the Managed Certificate and bind it to the custom domain.
 
-
-
         // Step 1:
         // DNS Ownership Verification Resources
         // var dnsOwnershipVerificationResources = new Infrastructure("dnsOwnershipVerificationInfra"); // Separate infra to hold the DNS verification resources
@@ -61,8 +56,8 @@ public static class AutoBindingCustomDomainExtensions
             subscriptionCustomDomainVerificationId,
             containerAppEnvironmentStaticIP,
             containerAppInfrastructure);
-        // Deploy DNS Verification Resouces with the Container App Infrastructure,
-        // Buit also make sure that they are deployed _before_ the Container App itself
+        // Deploy DNS Verification Resources with the Container App Infrastructure,
+        // But also make sure that they are deployed _before_ the Container App itself
         app.DependsOn.Add(dnsAsuidTxtRecord); // CustomDomain+auto binding requires the TXT record to be present
         app.DependsOn.Add(dnsRecordA); // Just to be on the safe side, only the managed certs requires this A record to be present
         // containerAppInfrastructure.Add(dnsOwnershipVerificationResources);
@@ -115,11 +110,10 @@ public static class AutoBindingCustomDomainExtensions
                 SubjectName = customDomainFqdn,
                 DomainControlValidation = new StringLiteralExpression("HTTP"),
             }
-            
+
         };
         autoBindManagedCertificate.DependsOn.Add(app);
         autoBindManagedCertificate.DependsOn.Add(dnsRecordA); // The A record is required for cert binding. It is checked during cert creation..
         containerAppInfrastructure.Add(autoBindManagedCertificate);
     }
 }
-#endregion
