@@ -12,6 +12,28 @@ namespace ACAWithCustomDomainCert;
 
 #pragma warning disable AZPROVISION001 // DNS Provisioning is still in beta
 
+// There isn't much sense in defining a custom resource for this.
+// It is per se not harmful and there is potentially some use for it in
+// *manual* DNS ownership verification scenarios.
+//
+// But in the context of Custom Domains with Auto-Binding Managed Certificates
+// for container apps, its individual usage gets a bit lost.
+// The custom domain is a configuration of a container app
+// that requires what this AzureDnsOwnershipVerificationResource represents but not
+// only that, it requires a manged certificate that is created as a child of the
+// CAE hosting the container app, and that certificate too depends on the DNS records this
+// resource represents. Requiring the developer to create a custom resource for this is a
+// leaky abstraction.
+//
+// OTOH, having a custom resource to represent the whole "Custom Domains with
+// Auto-Binding Managed Certificates" concept also doesn't seem appropriate either.
+// It doesn't have an independent lifecycle, as it MUST be associated to an specific App.
+//
+// Keeping in line with other Configure... methods that take ContainerApps as a parameter,
+// this method just goes ahead and creates all the resources to fullfil that configuration request.
+// We are not requesting the developer to create Managed Identities used for the CAE, there is no point
+// in exposing those required resources to the developer, so we are not doing that either.
+[Obsolete("This class is deprecated and will be removed in a future release. Use AzureDnsOwnershipVerificationResourceExtension instead.")]
 public class AzureDnsOwnershipVerificationResource(
     string name,
     string hostname,
