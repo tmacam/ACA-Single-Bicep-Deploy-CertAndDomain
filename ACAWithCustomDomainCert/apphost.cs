@@ -4,9 +4,6 @@
 
 using ACAWithCustomDomainCert;
 
-// TODOS:
-// * Use Outputs and a ProvisioningOutputReference to resolve the CustomDomainVerificationid from the CAE resource instead of using an existing reference
-
 var containerAppName = "myapp";
 var dnsZoneName = "apps.tmacam.dev";
 // the container app name doesn't NEED to match the leaf part of the FQDN but let's keep it simple, shall we?
@@ -23,7 +20,7 @@ var app = builder.AddContainer(containerAppName, "mcr.microsoft.com/k8se/quickst
     .WithExternalHttpEndpoints()
     .PublishAsAzureContainerApp((infra, app) =>
     {
-        app.ConfigureAutoBindingCustomDomain(cae, infra, containerAppName, dnsZoneName);
+        app.ConfigureAutoBindingCustomDomain(containerAppName, dnsZoneName, cae.Resource, infra);
     });
 
 builder.Build().Run();

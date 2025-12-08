@@ -35,13 +35,13 @@ public static class AutoBindingCustomDomainExtensions
     // code. The user should be aware of this and take appropriate actions (retries) if necessary.
     public static void ConfigureAutoBindingCustomDomain(
         this ContainerApp app,
-        IResourceBuilder<AzureContainerAppEnvironmentResource> cae,
-        AzureResourceInfrastructure containerAppInfrastructure,
         string hostname,
-        string dnsDomain)
+        string dnsDomain,
+        AzureContainerAppEnvironmentResource caeResource,
+        AzureResourceInfrastructure infrastructure)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(cae);
+        ArgumentNullException.ThrowIfNull(caeResource);
         ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         ArgumentException.ThrowIfNullOrWhiteSpace(dnsDomain);
 
@@ -62,21 +62,26 @@ public static class AutoBindingCustomDomainExtensions
         //  2. Create/Configure the Container App with the custom domain configured with bindingType:auto
         //  3. Create the Managed Certificate and bind it to the custom domain.
 
+        // CAE verificationId and ContainerApp (environment) IP Address
+        //
+        // Think of AzureResourceInfrastructure as a Bicep module. We are defining
+        // a reference to an existing Container App Environment resource in this "scope"
+        // so we have a resource we can refer to.
+        ContainerAppManagedEnvironment containerAppEnvironment = (ContainerAppManagedEnvironment)caeResource.AddAsExistingResource(infrastructure);
+        BicepValue<string> subscriptionCustomDomainVerificationId = containerAppEnvironment.CustomDomainConfiguration.CustomDomainVerificationId;
+        BicepValue<IPAddress> containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;
+
         // Step 1:
         // DNS Ownership Verification Resources
-        GetVerificationIdAndStaticIP(
-            cae,
-            containerAppInfrastructure,
-            out var subscriptionCustomDomainVerificationId,
-            out var containerAppEnvironmentStaticIP);
-        (var dnsAsuidTxtRecord, var dnsRecordA) = ConfigureInfrastructure(
+        // Create and deploy the DNS records required for domain ownership validation        
+        // with the Container App Infrastructure
+        (var dnsAsuidTxtRecord, var dnsRecordA) = CreateDnsOwnershipInfrastructure(
             hostname,
             dnsDomain,
             subscriptionCustomDomainVerificationId,
             containerAppEnvironmentStaticIP,
-            containerAppInfrastructure);
-        // Deploy DNS Verification Resources with the Container App Infrastructure,
-        // But also make sure that they are deployed _before_ the Container App itself
+            infrastructure);
+        // Also make sure that they are deployed _before_ the Container App itself
         app.DependsOn.Add(dnsAsuidTxtRecord); // CustomDomain+auto binding requires the TXT record to be present
         app.DependsOn.Add(dnsRecordA); // Just to be on the safe side, only the managed certs requires this A record to be present
 
@@ -118,7 +123,6 @@ public static class AutoBindingCustomDomainExtensions
         // it is not a child of the Container App itself, even though the binding is done on the
         // Container App. Cray-zey.
         // There must be an easier way to get the parent ContainerAppManagedEnvironment from the current Container App resource
-        ContainerAppManagedEnvironment containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(containerAppInfrastructure);
         ContainerAppManagedCertificate autoBindManagedCertificate = new(nameof(autoBindManagedCertificate))
         {
             Parent = containerAppEnvironment,
@@ -132,18 +136,18 @@ public static class AutoBindingCustomDomainExtensions
         };
         autoBindManagedCertificate.DependsOn.Add(app);
         autoBindManagedCertificate.DependsOn.Add(dnsRecordA); // The A record is required for cert binding. It is checked during cert creation..
-        containerAppInfrastructure.Add(autoBindManagedCertificate);
+        infrastructure.Add(autoBindManagedCertificate);
     }
 
-    public static (DnsTxtRecord, DnsARecord) ConfigureInfrastructure(
+    public static (DnsTxtRecord, DnsARecord) CreateDnsOwnershipInfrastructure(
         string hostname,
         string dnsDomain,
         BicepValue<string> subscriptionCustomDomainVerificationId,
         BicepValue<IPAddress> containerAppEnvironmentStaticIP,
         Infrastructure infrastructure)
     {
-        ArgumentException.ThrowIfNullOrEmpty(hostname, nameof(hostname));
-        ArgumentException.ThrowIfNullOrEmpty(dnsDomain, nameof(dnsDomain));
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname, nameof(hostname));
+        ArgumentException.ThrowIfNullOrWhiteSpace(dnsDomain, nameof(dnsDomain));
         ArgumentNullException.ThrowIfNull(subscriptionCustomDomainVerificationId);
         ArgumentNullException.ThrowIfNull(containerAppEnvironmentStaticIP);
         ArgumentNullException.ThrowIfNull(infrastructure);
@@ -195,21 +199,5 @@ public static class AutoBindingCustomDomainExtensions
         infrastructure.Add(new ProvisioningOutput("fqdn", typeof(string)) { Value = $"{hostname}.{dnsDomain}" });
 
         return (dnsAsuidTxtRecord, dnsRecordA);
-    }
-
-    public static void GetVerificationIdAndStaticIP(
-        IResourceBuilder<AzureContainerAppEnvironmentResource> cae,
-        AzureResourceInfrastructure infrastructure,
-        out BicepValue<string> subscriptionCustomDomainVerificationId,
-        out BicepValue<IPAddress> containerAppEnvironmentStaticIP)
-    {
-        // CAE verificationId and IP Address
-        //
-        // Think of AzureResourceInfrastructure as a Bicep module. We are defining
-        // a reference to an existing Container App Environment resource in this "scope"
-        // so we have a resource we can refer to.
-        ContainerAppManagedEnvironment containerAppEnvironment = (ContainerAppManagedEnvironment)cae.Resource.AddAsExistingResource(infrastructure);
-        subscriptionCustomDomainVerificationId = containerAppEnvironment.CustomDomainConfiguration.CustomDomainVerificationId;
-        containerAppEnvironmentStaticIP = containerAppEnvironment.StaticIP;
     }
 }
