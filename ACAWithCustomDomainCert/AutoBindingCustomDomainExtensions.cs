@@ -112,10 +112,11 @@ public static class AutoBindingCustomDomainExtensions
             .ForEach(i => app.Configuration.Ingress.CustomDomains.Remove(i));
         // Add the new custom domain.
         app.Configuration.Ingress.CustomDomains.Add(containerAppCustomDomain);
-        // BindingType:auto is only available for now in preview API versions from 2024-10 onwwards,
+        // BindingType:auto is only available for now in preview API versions from 2024-10 onwards,
         // so we need to update the resource version of this container app.
         app.ResourceVersion = "2025-07-01";
-        // TODO(tiagoa): PR to Azure.Provisioning to add 2025-07-01 as a known API version for ContainerApp
+        // TODO(tiagoa): Issue to Azure.Provisioning to request 2025-07-01 as a known API version for ContainerApp
+        // https://github.com/Azure/azure-sdk-for-net/issues/54380
 
         // Step 3:
         // Finally, we need to create the Managed Certificate and bind it to the custom domain
