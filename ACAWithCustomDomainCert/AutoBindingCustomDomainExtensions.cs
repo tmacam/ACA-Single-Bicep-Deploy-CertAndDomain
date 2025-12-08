@@ -64,12 +64,12 @@ public static class AutoBindingCustomDomainExtensions
 
         // Step 1:
         // DNS Ownership Verification Resources
-        AzureDnsOwnershipVerificationResourceExtension.GetVerificationIdAndStaticIP(
+        GetVerificationIdAndStaticIP(
             cae,
             containerAppInfrastructure,
             out var subscriptionCustomDomainVerificationId,
             out var containerAppEnvironmentStaticIP);
-        (var dnsAsuidTxtRecord, var dnsRecordA) = AzureDnsOwnershipVerificationResourceExtension.ConfigureInfrastructure(
+        (var dnsAsuidTxtRecord, var dnsRecordA) = ConfigureInfrastructure(
             hostname,
             dnsDomain,
             subscriptionCustomDomainVerificationId,
@@ -134,12 +134,6 @@ public static class AutoBindingCustomDomainExtensions
         autoBindManagedCertificate.DependsOn.Add(dnsRecordA); // The A record is required for cert binding. It is checked during cert creation..
         containerAppInfrastructure.Add(autoBindManagedCertificate);
     }
-}
-
-
-public static class AzureDnsOwnershipVerificationResourceExtension
-{
-
 
     public static (DnsTxtRecord, DnsARecord) ConfigureInfrastructure(
         string hostname,
