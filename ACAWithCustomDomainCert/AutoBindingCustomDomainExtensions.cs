@@ -12,6 +12,21 @@ namespace ACAWithCustomDomainCert;
 public static class AutoBindingCustomDomainExtensions
 {
     // Configures a ContainerApp to use a custom domain with auto binding managed certificate - along with the required resources for that.
+    //
+    // NOTICE about DNS record creation and race conditions: A successful ARM/Bicep deployment of
+    // an Azure DNS record only guarantees the Control Plane (CP) has accepted and stored the record.
+    // It does not guarantee is has been processed by DNS data plane (DP), nor that DNS resolution right
+    // after a successful deployment will succeed.
+    // While this deployment solution should work as an one-shot deployment, there is a small
+    // window where DNS resolution might fail, which will cause the deployment to fail with a
+    // message like this:
+    //
+    //     Deployment failed:
+    //          InvalidCustomHostNameValidation: A TXT record pointing from asuid.{hostname}.{dnsZone}. to
+    //          {subscriptionCustomDomainVerificationId} was not found.
+    //
+    // This is a known limitation of Azure DNS and is not something that can be fixed by this
+    // code. The user should be aware of this and take appropriate actions (retries) if necessary.
     public static void ConfigureAutoBindingCustomDomain(
         this ContainerApp app,
         IResourceBuilder<AzureContainerAppEnvironmentResource> cae,
