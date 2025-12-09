@@ -8,6 +8,8 @@ using Azure.Provisioning;
 using Azure.Provisioning.AppContainers;
 using Azure.Provisioning.Dns;
 using Azure.Provisioning.Expressions;
+using Azure.Provisioning.Primitives;
+using Azure.Provisioning.Resources;
 
 
 namespace ACAWithCustomDomainCert;
@@ -75,15 +77,15 @@ public static class AutoBindingCustomDomainExtensions
         // DNS Ownership Verification Resources
         // Create and deploy the DNS records required for domain ownership validation        
         // with the Container App Infrastructure
-        (var dnsAsuidTxtRecord, var dnsRecordA) = CreateDnsOwnershipInfrastructure(
+        var waitForDnsInfrastructure = CreateDnsOwnershipInfrastructure(
             hostname,
             dnsDomain,
             subscriptionCustomDomainVerificationId,
             containerAppEnvironmentStaticIP,
             infrastructure);
         // Also make sure that they are deployed _before_ the Container App itself
-        app.DependsOn.Add(dnsAsuidTxtRecord); // CustomDomain+auto binding requires the TXT record to be present
-        app.DependsOn.Add(dnsRecordA); // Just to be on the safe side, only the managed certs requires this A record to be present
+        app.DependsOn.Add(waitForDnsInfrastructure); 
+
 
         // Step 2:
         // Configure the custom domain on the Container App with bindingType:auto
@@ -136,11 +138,11 @@ public static class AutoBindingCustomDomainExtensions
 
         };
         autoBindManagedCertificate.DependsOn.Add(app);
-        autoBindManagedCertificate.DependsOn.Add(dnsRecordA); // The A record is required for cert binding. It is checked during cert creation..
+        autoBindManagedCertificate.DependsOn.Add(waitForDnsInfrastructure); // The A record is required for cert binding. It is checked during cert creation..
         infrastructure.Add(autoBindManagedCertificate);
     }
 
-    public static (DnsTxtRecord, DnsARecord) CreateDnsOwnershipInfrastructure(
+    public static ProvisionableResource CreateDnsOwnershipInfrastructure(
         string hostname,
         string dnsDomain,
         BicepValue<string> subscriptionCustomDomainVerificationId,
@@ -194,11 +196,26 @@ public static class AutoBindingCustomDomainExtensions
         };
         infrastructure.Add(dnsRecordA);
 
+        // DNS record resolution is not available after its creation. We need to wait for the DNS data plane
+        // to process the records, which might take up to 60s.
+        // https://learn.microsoft.com/en-us/azure/dns/dns-faq#how-long-does-it-take-for-dns-changes-to-take-effect-
+        // Let's KISS and just wait for 60 seconds instead of trying to resolve these DNS records and retrying.
+        AzurePowerShellScript wait60secondsForDnsResolution = new(nameof(wait60secondsForDnsResolution))
+        {
+            RetentionInterval = TimeSpan.FromDays(1),
+            Timeout = TimeSpan.FromMinutes(15), // A 60s wait script will take at least 2 minutes to boot and run...
+            AzPowerShellVersion = "14.0",
+            ScriptContent = "Start-Sleep -Seconds 60; exit 0",
+        };
+        infrastructure.Add(wait60secondsForDnsResolution);
+        wait60secondsForDnsResolution.DependsOn.Add(dnsAsuidTxtRecord);
+        wait60secondsForDnsResolution.DependsOn.Add(dnsRecordA);
+
         // Add outputs 
         infrastructure.Add(new ProvisioningOutput("dnsZoneName", typeof(string)) { Value = dnsZone.Name });
         infrastructure.Add(new ProvisioningOutput("hostname", typeof(string)) { Value = dnsRecordA.Name });
         infrastructure.Add(new ProvisioningOutput("fqdn", typeof(string)) { Value = $"{hostname}.{dnsDomain}" });
 
-        return (dnsAsuidTxtRecord, dnsRecordA);
+        return wait60secondsForDnsResolution;
     }
 }

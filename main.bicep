@@ -7,6 +7,8 @@ param containerAppName string = 'single-bicep-mcert-capp'
 @description('The location to deploy all my resources')
 param location string = resourceGroup().location
 
+param containerAppEnvironmentName string = 'aspirecontainerenv76lcyi'
+
 
 // We could and probably should retrieve this (or parts of this) from a property of existing resources
 // to make bicep track inter-resources dependencies for us. But honestly, this is simpler to understand.
@@ -33,19 +35,10 @@ resource dnsZone 'Microsoft.Network/dnsZones@2023-07-01-preview' existing = {
 
 // Container Apps Environment
 //
-// This could be an existing one, but for simplicity we create it here
+// Using an existing one for simplicity.
 // Note: CAE must be in a region that supports it and also supports managed certificates
-resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' = {
-  name: 'cae-autoBindCustomDomain-${rgUniqueSuffix}'
-  location: location
-  properties: {
-    workloadProfiles : [
-      {
-        workloadProfileType: 'Consumption'
-        name: 'Consumption'
-      }
-    ]
-  }
+resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' existing = {
+    name: containerAppEnvironmentName
 }
 
 // The Custom Domain Verification ID is a subscription-level constant value. We are retrieving it
@@ -89,6 +82,29 @@ resource dnsRecordA 'Microsoft.Network/dnsZones/A@2023-07-01-preview' = {
 }
 
 //
+// Dns Resolvability
+//
+// This is a bit of a hack. The DNS resolution might not be available immediately after the DNS records are created.
+// and it can take up to 60s for the DNS resolution to be available. To ensure that the DNS resolution is available
+// before the container app is created, we use a simple loop to check the DNS resolution.
+resource waitForDnsToBeResolvable 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+  name: 'waitForDnsToBeResolvable-${containerAppName}'
+  kind: 'AzurePowerShell'
+  location: location
+  properties: {
+    azPowerShellVersion: '14.0'
+    cleanupPreference: 'Always'
+    retentionInterval: 'P1D'
+    timeout: 'PT2M'
+    scriptContent: 'Start-Sleep -Seconds 60; exit 0'
+  }
+  dependsOn: [
+    dnsAsuidTxtRecord, dnsRecordA
+  ]
+}
+
+
+//
 // Container App with custom domain and auto-managed certificate
 //
 
@@ -127,7 +143,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
     }
   }
   dependsOn: [
-    dnsAsuidTxtRecord, dnsRecordA
+    dnsAsuidTxtRecord, dnsRecordA, waitForDnsToBeResolvable
   ]
 }
 
