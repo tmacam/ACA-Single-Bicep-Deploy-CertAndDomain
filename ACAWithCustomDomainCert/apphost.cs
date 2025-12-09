@@ -4,6 +4,9 @@
 
 using ACAWithCustomDomainCert;
 
+// TODO(tiagoa): You would want the dnszone  and the container app names to be IResourceBuilder<ParameterResource> so that they get prompted.
+
+
 var containerAppName = "myapp";
 var dnsZoneName = "apps.tmacam.dev";
 // the container app name doesn't NEED to match the leaf part of the FQDN but let's keep it simple, shall we?
