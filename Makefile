@@ -1,9 +1,20 @@
 RESOURCE_GROUP_NAME=acaSingleDeployCertAndDomain
 LOCATION=eastus2
 DNS_ZONE_NAME=apps.tmacam.dev
-CONTAINER_APP_NAME=single-bicep-mcert-capp
+CONTAINER_APP_NAME=single-bicep-ncuss2
+MANAGED_ENVIRONMENT_NAME=aspirecontainerenv76lcyi
 
-PHONY: deploy create-rg create-dns-zone get-dns-zone-nameservers
+all: deploy
+
+.PHONY: all deploy create-rg create-dns-zone get-dns-zone-nameservers
+
+info:
+	@echo "ℹ️ Deployment Information ℹ️"
+	@echo "   📁 Resource Group: $(RESOURCE_GROUP_NAME)"
+	@echo "   🌐 DNS Zone: $(DNS_ZONE_NAME)"
+	@echo "   📍 Location: $(LOCATION)"
+# 	@echo "   🚀 Container App Name: $(CONTAINER_APP_NAME)"
+# 	@echo "   🏗️ Managed Environment Name: $(MANAGED_ENVIRONMENT_NAME)"
 
 # Create the resource group to hold everything
 # This is idempotent, so if the RG already exists it will just return it.
@@ -29,18 +40,19 @@ get-dns-zone-nameservers:
 # Deploy the Container App with custom domain and managed certificate as a single bicep deployment
 # This target depends on the create-rg target to ensure the RG exists before deploying
 # It does NOT depend on create-dns-zone because we assume the DNS zone is pre-existing
-deploy: create-rg
+deploy: info
 	@echo "🔎 Validating Azure ContainerApp deployment in resource group $(RESOURCE_GROUP_NAME)" && \
 	az deployment group validate \
 			--resource-group $(RESOURCE_GROUP_NAME) \
 			--param dnsZoneName=$(DNS_ZONE_NAME) \
-			--param containerAppName=$(CONTAINER_APP_NAME) \
+			--param location=$(LOCATION) \
 			--template-file main.bicep -o table  && \
 	echo "🚀 Deploying Azure ContainerApp in resource group $(RESOURCE_GROUP_NAME)" && \
 	az deployment group create \
+			--name "single-bicep-deploy-$(LOCATION)-$(shell date +%Y%m%d%H%M%S)" \
 			--resource-group $(RESOURCE_GROUP_NAME) \
 			--param dnsZoneName=$(DNS_ZONE_NAME) \
-			--param containerAppName=$(CONTAINER_APP_NAME) \
+			--param location=$(LOCATION) \
 			--template-file main.bicep --query "properties.outputs" && \
 	echo "✅ Deployment finished"
 

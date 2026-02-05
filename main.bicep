@@ -2,7 +2,9 @@
 param dnsZoneName string = 'apps.tmacam.dev'
 
 @description('The name of the Container App to create')
-param containerAppName string = 'single-bicep-mcert-capp'
+param containerAppName string = 'single-bicep-${location}'
+
+param managedEnvironmentName string = 'env-${location}'
 
 @description('The location to deploy all my resources')
 param location string = resourceGroup().location
@@ -35,9 +37,12 @@ resource dnsZone 'Microsoft.Network/dnsZones@2023-07-01-preview' existing = {
 //
 // This could be an existing one, but for simplicity we create it here
 // Note: CAE must be in a region that supports it and also supports managed certificates
+// resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' existing = {
+//   name: managedEnvironmentName
+// }
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2025-02-02-preview' = {
-  name: 'cae-autoBindCustomDomain-${rgUniqueSuffix}'
-  location: location
+  name: managedEnvironmentName
+  location:  location
   properties: {
     workloadProfiles : [
       {
@@ -92,12 +97,12 @@ resource dnsRecordA 'Microsoft.Network/dnsZones/A@2023-07-01-preview' = {
 // Container App with custom domain and auto-managed certificate
 //
 
-// `auto` bindingType is supported from 2024-10-02-preview onwards. This is still in preview, so please use with care.
-resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
-  name: 'app-${containerAppName}'
+// `auto` bindingType is supported on 2024-10-02-preview as preview and GA'ed from 2025-07-01 onwards.
+resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
+  name: containerAppName
   location: location
   properties: {
-    managedEnvironmentId: managedEnvironment.id
+    environmentId: managedEnvironment.id
     configuration: {
       ingress: {
         external: true
@@ -134,7 +139,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
 
 
 resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-10-02-preview' = {
-  name: 'cert-${fqdnAppDomainName}-${rgUniqueSuffix}'
+  name: 'cert-${containerAppName}-${rgUniqueSuffix}'
   parent: managedEnvironment
   location: location
   properties: {
@@ -155,5 +160,5 @@ resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificat
 
 output nameServers array = dnsZone.properties.nameServers
 output containerAppUrl string = containerApp.properties.configuration.ingress.fqdn
-output managedCertificateId string = managedCertificate.id
+//  output managedCertificateId string = managedCertificate.id
 output subscriptionCustomDomainVerificationId string = subscriptionCustomDomainVerificationId
