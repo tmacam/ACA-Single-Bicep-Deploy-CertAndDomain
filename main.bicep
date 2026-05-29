@@ -70,8 +70,8 @@ resource dnsAsuidTxtRecord 'Microsoft.Network/dnsZones/TXT@2023-07-01-preview' =
   name: 'asuid.${containerAppName}' // Remember: not arbitrary, must be 'asuid.<your-app-name>'
   parent: dnsZone
   properties: {
-    TTL: 3600
-    TXTRecords: [
+      TTL: 15 // You might want to increase this in production
+      TXTRecords: [
       {
         value:[ subscriptionCustomDomainVerificationId ]
       }        
@@ -84,7 +84,7 @@ resource dnsRecordA 'Microsoft.Network/dnsZones/A@2023-07-01-preview' = {
   name: containerAppName // Remember: not arbitrary, must be '<your-app-name>'
   parent: dnsZone
   properties: {
-    TTL: 3600
+    TTL: 15 // You might want to increase this in production
     ARecords: [
       {
         ipv4Address: managedEnvironment.properties.staticIp
